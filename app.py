@@ -278,7 +278,7 @@ def download_file(student_id, filename):
     
     logger.info(f"File downloaded: {student_id}/{filename}")
     
-    return send_file(filepath, as_attachment=True, download_name=filename)
+    return send_file(filepath, as_attachment=True, attachment_filename=filename)
 
 
 @app.route('/files/<student_id>', methods=['GET'])

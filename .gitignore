@@ -1,0 +1,14 @@
+# Logs
+*.log
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Uploaded files (student data - never commit)
+uploads/
+
+# OS files
+.DS_Store

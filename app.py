@@ -1,559 +1,330 @@
 #!/usr/bin/env python3
 """
 Android Course File Upload/Download REST API
-University of Richmond - Spiderweb Server
-
-This Flask application provides HTTP POST/GET endpoints for students
-to upload and download files from their Android applications.
-
-Features:
-- Per-student directories (organized by NetID)
-- Storage quotas (configurable per-student and total)
-- File size limits
-- File type validation
-- Logging
-- Admin endpoint for monitoring
-
-Author: João Tonini, HPC Systems Administrator
-Course: CS XXX - Android Programming (Prof. Shweta Ware)
-Semester: Spring 2026
+Supports HTTP POST for file uploads and HTTP GET for downloads
+Per-student directory isolation with quotas and rate limiting
 """
 
+from flask import Flask, request, jsonify, send_file
+from werkzeug.utils import secure_filename
 import os
+import json
+import hashlib
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
 import logging
-from datetime import datetime
-from flask import Flask, request, send_file, jsonify
-
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-
-# Base directory for all uploads
-UPLOAD_BASE_DIR = '/scratch/android_course/uploads'
-
-# Log file location
-LOG_FILE = '/scratch/android_course/logs/api.log'
-
-# Storage limits
-MAX_FILE_SIZE_MB = 50
-MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
-
-PER_STUDENT_QUOTA_MB = 500
-PER_STUDENT_QUOTA_BYTES = PER_STUDENT_QUOTA_MB * 1024 * 1024
-
-TOTAL_COURSE_QUOTA_GB = 15
-TOTAL_COURSE_QUOTA_BYTES = TOTAL_COURSE_QUOTA_GB * 1024 * 1024 * 1024
-
-MAX_FILES_PER_STUDENT = 100
-
-# Allowed file extensions (set to None to allow all, or list specific ones)
-ALLOWED_EXTENSIONS = {'.txt', '.log'}  # As requested by faculty
-
-# Admin API key (change this to something secure!)
-ADMIN_API_KEY = 'changeme-android-admin-2026'
-
-# =============================================================================
-# APPLICATION SETUP
-# =============================================================================
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE_BYTES
 
-# Setup logging
+# Configuration
+BASE_UPLOAD_DIR = os.environ.get('UPLOAD_DIR', '/scratch/android_course/uploads')
+TOKEN_FILE = os.environ.get('TOKEN_FILE', '/scratch/android_course/tokens/tokens.json')
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+STUDENT_QUOTA = 500 * 1024 * 1024  # 500 MB per student
+RATE_LIMIT = 10  # uploads per minute
+ALLOWED_EXTENSIONS = {
+    'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'json', 'xml', 
+    'csv', 'zip', 'mp3', 'mp4', 'doc', 'docx'
+}
+
+# Rate limiting storage (in production, use Redis)
+upload_counts = {}
+
+# Logging setup
 logging.basicConfig(
-    filename=LOG_FILE,
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('/scratch/android_course/logs/api.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
+
+def load_tokens():
+    """Load student tokens from JSON file"""
+    try:
+        with open(TOKEN_FILE, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error(f"Token file not found: {TOKEN_FILE}")
+        return {}
+
+
+def validate_token(token):
+    """Validate token and return student netid"""
+    tokens = load_tokens()
+    for netid, student_token in tokens.items():
+        if student_token == token:
+            return netid
+    return None
+
+
+def get_student_dir(netid):
+    """Get student's upload directory path"""
+    student_dir = os.path.join(BASE_UPLOAD_DIR, netid)
+    os.makedirs(student_dir, exist_ok=True)
+    return student_dir
+
 
 def get_directory_size(path):
-    """Calculate total size of a directory in bytes."""
-    total_size = 0
-    if os.path.exists(path):
-        for dirpath, dirnames, filenames in os.walk(path):
-            for filename in filenames:
-                filepath = os.path.join(dirpath, filename)
-                if os.path.isfile(filepath):
-                    total_size += os.path.getsize(filepath)
-    return total_size
+    """Calculate total size of directory"""
+    total = 0
+    for entry in os.scandir(path):
+        if entry.is_file():
+            total += entry.stat().st_size
+        elif entry.is_dir():
+            total += get_directory_size(entry.path)
+    return total
 
-def get_file_count(path):
-    """Count total number of files in a directory."""
-    count = 0
-    if os.path.exists(path):
-        for dirpath, dirnames, filenames in os.walk(path):
-            count += len(filenames)
-    return count
 
-def is_valid_netid(netid):
-    """Validate NetID format (alphanumeric, reasonable length)."""
-    if not netid:
+def allowed_file(filename):
+    """Check if file extension is allowed"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def check_rate_limit(netid):
+    """Check if student has exceeded upload rate limit"""
+    current_time = time.time()
+    
+    if netid not in upload_counts:
+        upload_counts[netid] = []
+    
+    # Remove uploads older than 1 minute
+    upload_counts[netid] = [t for t in upload_counts[netid] if current_time - t < 60]
+    
+    if len(upload_counts[netid]) >= RATE_LIMIT:
         return False
-    if len(netid) < 2 or len(netid) > 20:
-        return False
-    return netid.isalnum()
-
-def is_allowed_file(filename):
-    """Check if file extension is allowed."""
-    if ALLOWED_EXTENSIONS is None:
-        return True
-    ext = os.path.splitext(filename)[1].lower()
-    return ext in ALLOWED_EXTENSIONS
-
-def secure_filename(filename):
-    """Sanitize filename to prevent directory traversal attacks."""
-    # Remove any path components
-    filename = os.path.basename(filename)
-    # Remove potentially dangerous characters
-    keepcharacters = (' ', '.', '_', '-')
-    filename = "".join(c for c in filename if c.isalnum() or c in keepcharacters).rstrip()
-    # Ensure filename is not empty
-    if not filename:
-        filename = 'unnamed_file'
-    return filename
-
-def format_size(bytes_size):
-    """Format bytes as human-readable string."""
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if bytes_size < 1024.0:
-            return f"{bytes_size:.1f} {unit}"
-        bytes_size /= 1024.0
-    return f"{bytes_size:.1f} TB"
-
-def check_admin_auth():
-    """Check if request has valid admin API key."""
-    api_key = request.headers.get('X-Admin-Key') or request.args.get('admin_key')
-    return api_key == ADMIN_API_KEY
-
-# =============================================================================
-# API ENDPOINTS
-# =============================================================================
-
-@app.route('/')
-def index():
-    """Health check and API info."""
-    return jsonify({
-        'service': 'Android Course File API',
-        'version': '1.1',
-        'status': 'running',
-        'endpoints': {
-            'POST /upload': 'Upload a file (requires student_id and file)',
-            'GET /download/<student_id>/<filename>': 'Download a file',
-            'GET /files/<student_id>': 'List files for a student',
-            'GET /quota/<student_id>': 'Check quota usage',
-            'DELETE /delete/<student_id>/<filename>': 'Delete a file',
-            'GET /admin/stats': 'Admin: View all students usage (requires admin_key)'
-        }
-    })
+    
+    upload_counts[netid].append(current_time)
+    return True
 
 
-@app.route('/upload', methods=['POST'])
+@app.route('/android/upload', methods=['POST'])
 def upload_file():
-    """
-    Upload a file for a student.
-    
-    Required form fields:
-    - student_id: The student's NetID
-    - file: The file to upload
-    
-    Returns:
-    - JSON response with success status and file info
-    """
-    # Validate student_id
-    student_id = request.form.get('student_id', '').strip().lower()
-    if not is_valid_netid(student_id):
-        logger.warning(f"Invalid student_id attempted: {student_id}")
-        return jsonify({
-            'success': False,
-            'error': 'Invalid student_id. Must be alphanumeric, 2-20 characters.'
-        }), 400
-    
-    # Check if file is present
-    if 'file' not in request.files:
-        return jsonify({
-            'success': False,
-            'error': 'No file provided. Include a file with key "file".'
-        }), 400
-    
-    file = request.files['file']
-    
-    if file.filename == '':
-        return jsonify({
-            'success': False,
-            'error': 'No file selected.'
-        }), 400
-    
-    # Sanitize filename
-    filename = secure_filename(file.filename)
-    
-    # Check file extension
-    if not is_allowed_file(filename):
-        allowed = ', '.join(ALLOWED_EXTENSIONS) if ALLOWED_EXTENSIONS else 'all'
-        return jsonify({
-            'success': False,
-            'error': f'File type not allowed. Allowed types: {allowed}'
-        }), 400
-    
-    # Create student directory if it doesn't exist
-    student_dir = os.path.join(UPLOAD_BASE_DIR, student_id)
-    os.makedirs(student_dir, exist_ok=True)
-    
-    # Check total course quota
-    total_usage = get_directory_size(UPLOAD_BASE_DIR)
-    if total_usage >= TOTAL_COURSE_QUOTA_BYTES:
-        logger.error(f"Course quota exceeded. Total usage: {format_size(total_usage)}")
-        return jsonify({
-            'success': False,
-            'error': 'Course storage limit reached. Contact instructor.'
-        }), 507
-    
-    # Check student quota
-    student_usage = get_directory_size(student_dir)
-    
-    # Read file content to check size
-    file_content = file.read()
-    file_size = len(file_content)
-    
-    if student_usage + file_size > PER_STUDENT_QUOTA_BYTES:
-        return jsonify({
-            'success': False,
-            'error': f'Quota exceeded. You have used {format_size(student_usage)} of {format_size(PER_STUDENT_QUOTA_BYTES)}. '
-                     f'This file ({format_size(file_size)}) would exceed your limit.'
-        }), 413
-    
-    # Check file count
-    file_count = get_file_count(student_dir)
-    if file_count >= MAX_FILES_PER_STUDENT:
-        return jsonify({
-            'success': False,
-            'error': f'Maximum file count ({MAX_FILES_PER_STUDENT}) reached. Delete some files first.'
-        }), 413
-    
-    # Save the file
-    filepath = os.path.join(student_dir, filename)
-    with open(filepath, 'wb') as f:
-        f.write(file_content)
-    
-    logger.info(f"File uploaded: {student_id}/{filename} ({format_size(file_size)})")
-    
-    return jsonify({
-        'success': True,
-        'message': 'File uploaded successfully.',
-        'filename': filename,
-        'size': file_size,
-        'size_formatted': format_size(file_size),
-        'quota_used': student_usage + file_size,
-        'quota_used_formatted': format_size(student_usage + file_size),
-        'quota_limit_formatted': format_size(PER_STUDENT_QUOTA_BYTES)
-    }), 201
-
-
-@app.route('/download/<student_id>/<filename>', methods=['GET'])
-def download_file(student_id, filename):
-    """
-    Download a file for a student.
-    
-    URL parameters:
-    - student_id: The student's NetID
-    - filename: The name of the file to download
-    
-    Returns:
-    - The file as an attachment
-    """
-    # Validate student_id
-    student_id = student_id.strip().lower()
-    if not is_valid_netid(student_id):
-        return jsonify({
-            'success': False,
-            'error': 'Invalid student_id.'
-        }), 400
-    
-    # Sanitize filename
-    filename = secure_filename(filename)
-    
-    # Build filepath
-    filepath = os.path.join(UPLOAD_BASE_DIR, student_id, filename)
-    
-    # Check if file exists
-    if not os.path.isfile(filepath):
-        return jsonify({
-            'success': False,
-            'error': 'File not found.'
-        }), 404
-    
-    logger.info(f"File downloaded: {student_id}/{filename}")
-    
-    return send_file(filepath, as_attachment=True, attachment_filename=filename)
-
-
-@app.route('/files/<student_id>', methods=['GET'])
-def list_files(student_id):
-    """
-    List all files for a student.
-    
-    URL parameters:
-    - student_id: The student's NetID
-    
-    Returns:
-    - JSON list of files with metadata
-    """
-    # Validate student_id
-    student_id = student_id.strip().lower()
-    if not is_valid_netid(student_id):
-        return jsonify({
-            'success': False,
-            'error': 'Invalid student_id.'
-        }), 400
-    
-    student_dir = os.path.join(UPLOAD_BASE_DIR, student_id)
-    
-    if not os.path.exists(student_dir):
-        return jsonify({
-            'success': True,
-            'student_id': student_id,
-            'files': [],
-            'total_size': 0,
-            'total_size_formatted': '0 B'
-        })
-    
-    files = []
-    total_size = 0
-    
-    for filename in os.listdir(student_dir):
+    """Handle file upload via HTTP POST"""
+    try:
+        # Validate token
+        token = request.headers.get('X-Auth-Token')
+        if not token:
+            logger.warning("Upload attempt without token")
+            return jsonify({'error': 'Missing authentication token'}), 401
+        
+        netid = validate_token(token)
+        if not netid:
+            logger.warning(f"Invalid token attempt: {token[:8]}...")
+            return jsonify({'error': 'Invalid authentication token'}), 401
+        
+        # Check rate limit
+        if not check_rate_limit(netid):
+            logger.warning(f"Rate limit exceeded for {netid}")
+            return jsonify({'error': 'Rate limit exceeded. Maximum 10 uploads per minute'}), 429
+        
+        # Check if file present in request
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'Empty filename'}), 400
+        
+        # Validate file type
+        if not allowed_file(file.filename):
+            return jsonify({'error': 'File type not allowed'}), 400
+        
+        # Check file size
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        file.seek(0)
+        
+        if file_size > MAX_FILE_SIZE:
+            return jsonify({'error': f'File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.0f} MB'}), 413
+        
+        # Check quota
+        student_dir = get_student_dir(netid)
+        current_usage = get_directory_size(student_dir)
+        
+        if current_usage + file_size > STUDENT_QUOTA:
+            remaining = STUDENT_QUOTA - current_usage
+            return jsonify({
+                'error': 'Quota exceeded',
+                'current_usage_mb': current_usage / (1024*1024),
+                'quota_mb': STUDENT_QUOTA / (1024*1024),
+                'remaining_mb': remaining / (1024*1024)
+            }), 507
+        
+        # Save file
+        filename = secure_filename(file.filename)
         filepath = os.path.join(student_dir, filename)
-        if os.path.isfile(filepath):
-            stat = os.stat(filepath)
-            size = stat.st_size
-            total_size += size
-            files.append({
-                'filename': filename,
-                'size': size,
-                'size_formatted': format_size(size),
-                'uploaded': datetime.fromtimestamp(stat.st_mtime).isoformat()
-            })
-    
-    # Sort by upload time (newest first)
-    files.sort(key=lambda x: x['uploaded'], reverse=True)
-    
-    return jsonify({
-        'success': True,
-        'student_id': student_id,
-        'files': files,
-        'file_count': len(files),
-        'total_size': total_size,
-        'total_size_formatted': format_size(total_size)
-    })
-
-
-@app.route('/quota/<student_id>', methods=['GET'])
-def check_quota(student_id):
-    """
-    Check quota usage for a student.
-    
-    URL parameters:
-    - student_id: The student's NetID
-    
-    Returns:
-    - JSON with quota information
-    """
-    # Validate student_id
-    student_id = student_id.strip().lower()
-    if not is_valid_netid(student_id):
+        
+        # Handle duplicate filenames
+        base, ext = os.path.splitext(filename)
+        counter = 1
+        while os.path.exists(filepath):
+            filename = f"{base}_{counter}{ext}"
+            filepath = os.path.join(student_dir, filename)
+            counter += 1
+        
+        file.save(filepath)
+        
+        # Log successful upload
+        logger.info(f"Upload successful - NetID: {netid}, File: {filename}, Size: {file_size} bytes")
+        
         return jsonify({
-            'success': False,
-            'error': 'Invalid student_id.'
-        }), 400
-    
-    student_dir = os.path.join(UPLOAD_BASE_DIR, student_id)
-    
-    used = get_directory_size(student_dir)
-    file_count = get_file_count(student_dir)
-    available = max(0, PER_STUDENT_QUOTA_BYTES - used)
-    percentage = (used / PER_STUDENT_QUOTA_BYTES) * 100 if PER_STUDENT_QUOTA_BYTES > 0 else 0
-    
-    return jsonify({
-        'success': True,
-        'student_id': student_id,
-        'quota': {
-            'used': used,
-            'used_formatted': format_size(used),
-            'limit': PER_STUDENT_QUOTA_BYTES,
-            'limit_formatted': format_size(PER_STUDENT_QUOTA_BYTES),
-            'available': available,
-            'available_formatted': format_size(available),
-            'percentage_used': round(percentage, 1)
-        },
-        'files': {
-            'count': file_count,
-            'limit': MAX_FILES_PER_STUDENT
-        }
-    })
+            'message': 'File uploaded successfully',
+            'filename': filename,
+            'size_bytes': file_size,
+            'current_usage_mb': (current_usage + file_size) / (1024*1024),
+            'quota_mb': STUDENT_QUOTA / (1024*1024)
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Upload error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
-@app.route('/delete/<student_id>/<filename>', methods=['DELETE'])
-def delete_file(student_id, filename):
-    """
-    Delete a file for a student.
-    
-    URL parameters:
-    - student_id: The student's NetID
-    - filename: The name of the file to delete
-    
-    Returns:
-    - JSON response with success status
-    """
-    # Validate student_id
-    student_id = student_id.strip().lower()
-    if not is_valid_netid(student_id):
+@app.route('/android/download/<filename>', methods=['GET'])
+def download_file(filename):
+    """Handle file download via HTTP GET"""
+    try:
+        # Validate token
+        token = request.headers.get('X-Auth-Token')
+        if not token:
+            logger.warning("Download attempt without token")
+            return jsonify({'error': 'Missing authentication token'}), 401
+        
+        netid = validate_token(token)
+        if not netid:
+            logger.warning(f"Invalid token attempt: {token[:8]}...")
+            return jsonify({'error': 'Invalid authentication token'}), 401
+        
+        # Get student directory
+        student_dir = get_student_dir(netid)
+        filepath = os.path.join(student_dir, secure_filename(filename))
+        
+        # Check if file exists
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'File not found'}), 404
+        
+        # Prevent directory traversal
+        if not os.path.abspath(filepath).startswith(os.path.abspath(student_dir)):
+            logger.warning(f"Directory traversal attempt by {netid}: {filename}")
+            return jsonify({'error': 'Invalid file path'}), 403
+        
+        # Log successful download
+        logger.info(f"Download successful - NetID: {netid}, File: {filename}")
+        
+        return send_file(filepath, as_attachment=True)
+        
+    except Exception as e:
+        logger.error(f"Download error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/android/list', methods=['GET'])
+def list_files():
+    """List all files in student's directory"""
+    try:
+        # Validate token
+        token = request.headers.get('X-Auth-Token')
+        if not token:
+            return jsonify({'error': 'Missing authentication token'}), 401
+        
+        netid = validate_token(token)
+        if not netid:
+            return jsonify({'error': 'Invalid authentication token'}), 401
+        
+        # Get student directory
+        student_dir = get_student_dir(netid)
+        
+        # List files
+        files = []
+        for entry in os.scandir(student_dir):
+            if entry.is_file():
+                stat = entry.stat()
+                files.append({
+                    'filename': entry.name,
+                    'size_bytes': stat.st_size,
+                    'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
+                })
+        
+        # Get usage stats
+        total_usage = get_directory_size(student_dir)
+        
         return jsonify({
-            'success': False,
-            'error': 'Invalid student_id.'
-        }), 400
-    
-    # Sanitize filename
-    filename = secure_filename(filename)
-    
-    # Build filepath
-    filepath = os.path.join(UPLOAD_BASE_DIR, student_id, filename)
-    
-    # Check if file exists
-    if not os.path.isfile(filepath):
+            'files': files,
+            'total_files': len(files),
+            'total_usage_mb': total_usage / (1024*1024),
+            'quota_mb': STUDENT_QUOTA / (1024*1024),
+            'remaining_mb': (STUDENT_QUOTA - total_usage) / (1024*1024)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"List error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/android/delete/<filename>', methods=['DELETE'])
+def delete_file(filename):
+    """Delete a file from student's directory"""
+    try:
+        # Validate token
+        token = request.headers.get('X-Auth-Token')
+        if not token:
+            return jsonify({'error': 'Missing authentication token'}), 401
+        
+        netid = validate_token(token)
+        if not netid:
+            return jsonify({'error': 'Invalid authentication token'}), 401
+        
+        # Get student directory
+        student_dir = get_student_dir(netid)
+        filepath = os.path.join(student_dir, secure_filename(filename))
+        
+        # Check if file exists
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'File not found'}), 404
+        
+        # Prevent directory traversal
+        if not os.path.abspath(filepath).startswith(os.path.abspath(student_dir)):
+            logger.warning(f"Directory traversal attempt by {netid}: {filename}")
+            return jsonify({'error': 'Invalid file path'}), 403
+        
+        # Delete file
+        os.remove(filepath)
+        
+        # Log successful deletion
+        logger.info(f"Delete successful - NetID: {netid}, File: {filename}")
+        
+        # Get updated usage
+        total_usage = get_directory_size(student_dir)
+        
         return jsonify({
-            'success': False,
-            'error': 'File not found.'
-        }), 404
-    
-    # Delete the file
-    file_size = os.path.getsize(filepath)
-    os.remove(filepath)
-    
-    logger.info(f"File deleted: {student_id}/{filename}")
-    
+            'message': 'File deleted successfully',
+            'filename': filename,
+            'current_usage_mb': total_usage / (1024*1024),
+            'quota_mb': STUDENT_QUOTA / (1024*1024)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Delete error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/android/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
     return jsonify({
-        'success': True,
-        'message': 'File deleted successfully.',
-        'filename': filename,
-        'freed_space': file_size,
-        'freed_space_formatted': format_size(file_size)
-    })
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat()
+    }), 200
 
-
-# =============================================================================
-# ADMIN ENDPOINTS
-# =============================================================================
-
-@app.route('/admin/stats', methods=['GET'])
-def admin_stats():
-    """
-    Admin endpoint: View all students' usage statistics.
-    
-    Requires admin API key via header (X-Admin-Key) or query param (admin_key).
-    
-    Returns:
-    - JSON with all students' usage, sorted by usage (highest first)
-    """
-    if not check_admin_auth():
-        return jsonify({
-            'success': False,
-            'error': 'Unauthorized. Admin API key required.'
-        }), 401
-    
-    if not os.path.exists(UPLOAD_BASE_DIR):
-        return jsonify({
-            'success': True,
-            'total_students': 0,
-            'total_usage': 0,
-            'total_usage_formatted': '0 B',
-            'course_quota_formatted': format_size(TOTAL_COURSE_QUOTA_BYTES),
-            'students': []
-        })
-    
-    students = []
-    total_usage = 0
-    
-    for student_id in os.listdir(UPLOAD_BASE_DIR):
-        student_dir = os.path.join(UPLOAD_BASE_DIR, student_id)
-        if os.path.isdir(student_dir):
-            usage = get_directory_size(student_dir)
-            file_count = get_file_count(student_dir)
-            total_usage += usage
-            percentage = (usage / PER_STUDENT_QUOTA_BYTES) * 100 if PER_STUDENT_QUOTA_BYTES > 0 else 0
-            
-            students.append({
-                'student_id': student_id,
-                'usage': usage,
-                'usage_formatted': format_size(usage),
-                'file_count': file_count,
-                'quota_percentage': round(percentage, 1)
-            })
-    
-    # Sort by usage (highest first)
-    students.sort(key=lambda x: x['usage'], reverse=True)
-    
-    course_percentage = (total_usage / TOTAL_COURSE_QUOTA_BYTES) * 100 if TOTAL_COURSE_QUOTA_BYTES > 0 else 0
-    
-    return jsonify({
-        'success': True,
-        'generated_at': datetime.now().isoformat(),
-        'total_students': len(students),
-        'total_usage': total_usage,
-        'total_usage_formatted': format_size(total_usage),
-        'course_quota': TOTAL_COURSE_QUOTA_BYTES,
-        'course_quota_formatted': format_size(TOTAL_COURSE_QUOTA_BYTES),
-        'course_quota_percentage': round(course_percentage, 1),
-        'per_student_quota_formatted': format_size(PER_STUDENT_QUOTA_BYTES),
-        'students': students
-    })
-
-
-# =============================================================================
-# ERROR HANDLERS
-# =============================================================================
-
-@app.errorhandler(413)
-def request_entity_too_large(error):
-    """Handle file too large error."""
-    return jsonify({
-        'success': False,
-        'error': f'File too large. Maximum size is {MAX_FILE_SIZE_MB} MB.'
-    }), 413
-
-
-@app.errorhandler(404)
-def not_found(error):
-    """Handle 404 errors."""
-    return jsonify({
-        'success': False,
-        'error': 'Endpoint not found.'
-    }), 404
-
-
-@app.errorhandler(500)
-def internal_error(error):
-    """Handle internal server errors."""
-    logger.error(f"Internal error: {error}")
-    return jsonify({
-        'success': False,
-        'error': 'Internal server error. Please try again later.'
-    }), 500
-
-
-# =============================================================================
-# MAIN
-# =============================================================================
 
 if __name__ == '__main__':
-    # Ensure upload directory exists
-    os.makedirs(UPLOAD_BASE_DIR, exist_ok=True)
+    # Create base upload directory
+    os.makedirs(BASE_UPLOAD_DIR, exist_ok=True)
     
-    # Run development server (use gunicorn in production)
-    print(f"Starting Android Course File API...")
-    print(f"Upload directory: {UPLOAD_BASE_DIR}")
-    print(f"Per-student quota: {PER_STUDENT_QUOTA_MB} MB")
-    print(f"Max file size: {MAX_FILE_SIZE_MB} MB")
+    # Run Flask app
     app.run(host='0.0.0.0', port=5000, debug=False)

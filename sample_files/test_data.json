@@ -1,0 +1,35 @@
+{
+  "test_data": {
+    "course": "Android Programming",
+    "assignment": "HTTP File Upload",
+    "test_number": 1,
+    "timestamp": "2026-02-15T10:30:00Z",
+    "student": {
+      "name": "Test Student",
+      "id": "TEST001"
+    },
+    "upload_test": {
+      "file_type": "JSON",
+      "purpose": "Testing structured data upload",
+      "expected_result": "success"
+    },
+    "data_samples": [
+      {
+        "id": 1,
+        "value": "Sample data point 1",
+        "score": 85
+      },
+      {
+        "id": 2,
+        "value": "Sample data point 2",
+        "score": 92
+      },
+      {
+        "id": 3,
+        "value": "Sample data point 3",
+        "score": 78
+      }
+    ],
+    "notes": "This is test data for learning purposes only. Do not use real student data."
+  }
+}

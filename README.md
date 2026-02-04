@@ -1,243 +1,401 @@
-# Android Course File API
+# Android Course File Upload API
 
-REST API for file upload/download for CS Android Programming course at University of Richmond.
+REST API for Android Programming students to practice HTTP POST/GET operations with file transfers.
 
-## Features
+**Course:** Android Programming - Spring 2026  
+**Instructor:** Professor Shweta Ware  
+**Students:** 18 (17 + instructor)  
+**System:** spiderweb.richmond.edu  
+**User:** installer  
 
-- File upload (HTTP POST) and download (HTTP GET)
-- Per-student directories organized by NetID
-- Storage quotas with real-time enforcement
-- File type validation (.txt, .log)
-- Admin dashboard for monitoring
-- Automated cleanup and notification scripts
+---
 
-## Directory Structure
+## Directory Structure on Spiderweb
 
 ```
 /scratch/android_course/
-├── app/
-│   ├── app.py              # Flask application
+├── app/                          # Application code (this repo)
+│   ├── app.py                    # Flask REST API
+│   ├── android-api.conf          # Apache config
+│   ├── android-api.service       # systemd service
+│   ├── requirements.txt          # Python dependencies
+│   ├── .gitignore                # Git ignore (hides student data)
+│   ├── docs/
+│   │   ├── STUDENT_GUIDE.md      # API documentation for students
+│   │   └── TOKEN_PLACEHOLDER_SNIPPET.md  # For Prof. Ware's starter code
 │   ├── scripts/
-│   │   ├── monitor.sh      # Disk usage monitoring
-│   │   ├── cleanup.sh      # End-of-semester cleanup
-│   │   └── notify_students.sh  # Student notifications
-│   └── docs/
-│       └── STUDENT_GUIDE.md    # Student documentation
-├── uploads/                # Student files (organized by NetID)
-│   ├── ab1cd/
-│   ├── xy2zz/
-│   └── ...
-├── logs/
-│   └── api.log            # Application logs
-└── backups/               # Backup archives
+│   │   ├── generate_tokens.py    # Token management
+│   │   ├── cleanup.sh            # Cleanup script (from João)
+│   │   ├── monitor.sh            # Monitoring script (from João)
+│   │   └── notify_students.sh    # Notification script (from João)
+│   ├── sample_files/             # Optional test files for students
+│   │   ├── sample_test.txt
+│   │   ├── test_data.json
+│   │   ├── sensor_data.csv
+│   │   ├── test_image.png
+│   │   └── README.md
+│   ├── policies/
+│   │   └── ACCEPTABLE_USE_POLICY.md  # For students (Prof. Ware can modify)
+│   └── config/
+│       └── tokens.json.template  # Empty template (NOT tokens/tokens.json)
+│
+├── tokens/                       # Student tokens (GITIGNORED)
+│   └── tokens.json               # Created by generate_tokens.py
+│
+├── logs/                         # Application logs (GITIGNORED)
+│   ├── api.log
+│   ├── access.log
+│   └── error.log
+│
+└── uploads/                      # Student files (GITIGNORED)
+    ├── student1/
+    ├── student2/
+    └── ...
 ```
 
-## Quick Start
+---
 
-### Development/Testing
+## GitHub Repository Setup
+
+### 1. Create GitHub Repo
 
 ```bash
-cd /scratch/android_course/app
-/usr/local/sw/anaconda3/bin/python3 app.py
+# On badenpowell (as cazuza)
+cd /android-course-api
+git init
+git add .
+git commit -m "Initial commit - Android Course API"
+git remote add origin git@github.com:yourusername/android-course-api.git
+git push -u origin main
 ```
 
-### Production (with gunicorn)
+### 2. What Gets Committed to GitHub
+
+✅ **Committed (safe to share):**
+- `app.py` - Flask application
+- `android-api.conf` - Apache config
+- `android-api.service` - systemd service
+- `requirements.txt` - Python dependencies
+- `docs/` - All documentation
+- `scripts/` - Management scripts
+- `sample_files/` - Test files
+- `policies/` - Policy documents
+- `.gitignore` - Git ignore rules
+- `config/tokens.json.template` - Empty template
+
+❌ **NOT Committed (in .gitignore):**
+- `tokens/` - Student tokens (sensitive!)
+- `uploads/` - Student files (private!)
+- `logs/` - Application logs
+- `__pycache__/` - Python cache
+
+### 3. Clone to Spiderweb
 
 ```bash
-/usr/local/sw/anaconda3/bin/gunicorn --bind 127.0.0.1:5000 --workers 2 app:app
+# On spiderweb (as installer)
+cd /scratch/android_course
+git clone git@github.com:yourusername/android-course-api.git app
+cd app
+
+# Create the gitignored directories
+mkdir -p /scratch/android_course/tokens
+mkdir -p /scratch/android_course/logs
+mkdir -p /scratch/android_course/uploads
+
+# Initialize tokens file
+cp config/tokens.json.template /scratch/android_course/tokens/tokens.json
 ```
 
-## API Endpoints
+---
 
-### Student Endpoints
+## Deployment on Spiderweb
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Health check and API info |
-| POST | `/upload` | Upload a file |
-| GET | `/download/<student_id>/<filename>` | Download a file |
-| GET | `/files/<student_id>` | List student's files |
-| GET | `/quota/<student_id>` | Check quota usage |
-| DELETE | `/delete/<student_id>/<filename>` | Delete a file |
+### Prerequisites
+- User: `installer` (you and Prof. Ware need access)
+- Directory: `/scratch/android_course/`
+- Anaconda environment available at `/usr/local/sw/anaconda3`
 
-### Admin Endpoints
+### Setup Steps
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/admin/stats` | View all students' usage (requires admin_key) |
-
-## Testing with curl
-
+#### 1. Clone Repository
 ```bash
-# Health check
-curl http://localhost:5000/
-
-# Upload a file
-curl -X POST \
-  -F "student_id=testuser" \
-  -F "file=@/path/to/test.txt" \
-  http://localhost:5000/upload
-
-# Download a file
-curl -O http://localhost:5000/download/testuser/test.txt
-
-# List files
-curl http://localhost:5000/files/testuser
-
-# Check quota
-curl http://localhost:5000/quota/testuser
-
-# Delete a file
-curl -X DELETE http://localhost:5000/delete/testuser/test.txt
-
-# Admin stats (requires API key)
-curl -H "X-Admin-Key: changeme-android-admin-2026" \
-  http://localhost:5000/admin/stats
+# As installer user on spiderweb
+cd /scratch/android_course
+git clone git@github.com:yourusername/android-course-api.git app
+cd app
 ```
 
-## Configuration
-
-Edit the top of `app.py` to adjust:
-
-```python
-UPLOAD_BASE_DIR = '/scratch/android_course/uploads'
-MAX_FILE_SIZE_MB = 50           # Maximum single file size
-PER_STUDENT_QUOTA_MB = 500      # Per-student storage limit
-TOTAL_COURSE_QUOTA_GB = 15      # Total course storage
-MAX_FILES_PER_STUDENT = 100     # Maximum files per student
-ALLOWED_EXTENSIONS = {'.txt', '.log'}  # Allowed file types
-ADMIN_API_KEY = 'changeme-android-admin-2026'  # Change this!
-```
-
-## Scripts
-
-### Monitoring Script
-
-Check disk usage and send email alerts:
-
+#### 2. Create Required Directories
 ```bash
-# View current usage
-./scripts/monitor.sh
+mkdir -p /scratch/android_course/tokens
+mkdir -p /scratch/android_course/logs
+mkdir -p /scratch/android_course/uploads
 
-# Send email if thresholds exceeded
-./scripts/monitor.sh --email
-
-# Quiet mode (only output warnings)
-./scripts/monitor.sh --quiet
+# Initialize tokens file
+echo '{}' > /scratch/android_course/tokens/tokens.json
+chmod 644 /scratch/android_course/tokens/tokens.json
 ```
 
-Recommended cron entry (daily at 8am):
-```cron
-0 8 * * * /scratch/android_course/app/scripts/monitor.sh --email
-```
-
-### Cleanup Script
-
-Remove student data at end of semester:
-
+#### 3. Install Python Dependencies
 ```bash
-# Preview what will be deleted
-./scripts/cleanup.sh --dry-run
-
-# Backup and delete
-./scripts/cleanup.sh --backup
-
-# Force delete (for cron)
-./scripts/cleanup.sh --backup --force
+# Using Anaconda
+/usr/local/sw/anaconda3/bin/pip install -r requirements.txt
 ```
 
-### Student Notification Script
-
-Send email reminders about upcoming data deletion:
-
+#### 4. Install System Services (as root)
 ```bash
-# Preview emails
-./scripts/notify_students.sh --dry-run
-
-# Send 30-day warning
-./scripts/notify_students.sh --days 30
-
-# Send 7-day warning
-./scripts/notify_students.sh --days 7
-```
-
-## Production Deployment
-
-### 1. Systemd Service
-
-Copy `android-api.service` to `/etc/systemd/system/`:
-
-```bash
+# Copy files
 sudo cp android-api.service /etc/systemd/system/
+sudo cp android-api.conf /etc/httpd/conf.d/
+
+# Enable and start services
 sudo systemctl daemon-reload
 sudo systemctl enable android-api
 sudo systemctl start android-api
+sudo systemctl restart httpd
 ```
 
-### 2. Apache Reverse Proxy
-
-Copy `android-api.conf` to `/etc/httpd/conf.d/`:
-
+#### 5. Verify Deployment
 ```bash
-sudo cp android-api.conf /etc/httpd/conf.d/
-sudo systemctl reload httpd
-```
+# Check service status
+sudo systemctl status android-api
 
-### 3. Verify
+# Test health endpoint
+curl https://spiderweb.richmond.edu/android/health
+# Should return: {"status":"healthy","timestamp":"..."}
 
-```bash
-curl https://spiderweb.richmond.edu/android/
-```
-
-## Cron Jobs (Recommended)
-
-Add to crontab for automated maintenance:
-
-```cron
-# Daily monitoring at 8am
-0 8 * * * /scratch/android_course/app/scripts/monitor.sh --email --quiet
-
-# 30-day deletion warning (May 15)
-0 9 15 5 * /scratch/android_course/app/scripts/notify_students.sh --days 30
-
-# 7-day deletion warning (June 8)
-0 9 8 6 * /scratch/android_course/app/scripts/notify_students.sh --days 7
-
-# Final cleanup (June 15)
-0 0 15 6 * /scratch/android_course/app/scripts/cleanup.sh --backup --force
-```
-
-## Maintenance
-
-### View logs
-```bash
+# Check logs
 tail -f /scratch/android_course/logs/api.log
 ```
 
-### Check disk usage
+---
+
+## Token Management
+
+### Generate Tokens for Students
+
 ```bash
-du -sh /scratch/android_course/uploads/
-du -sh /scratch/android_course/uploads/*/
+cd /scratch/android_course/app
+/usr/local/sw/anaconda3/bin/python scripts/generate_tokens.py add netid1
+/usr/local/sw/anaconda3/bin/python scripts/generate_tokens.py add netid2
 ```
 
-### Restart service
+### Bulk Import from Roster
 ```bash
+# Create students.txt with one NetID per line
+cat > students.txt << EOF
+student1
+student2
+student3
+EOF
+
+/usr/local/sw/anaconda3/bin/python scripts/generate_tokens.py bulk students.txt
+```
+
+### Export for Distribution
+```bash
+/usr/local/sw/anaconda3/bin/python scripts/generate_tokens.py export tokens_spring2026.csv
+```
+
+This creates a CSV that Professor Ware can use to email individual tokens to students.
+
+---
+
+## File Permissions for Prof. Ware Access
+
+Professor Ware needs to access the directory. Two options:
+
+### Option 1: Add her to installer group
+```bash
+sudo usermod -a -G installer sware
+# Prof. Ware logs out and back in
+```
+
+### Option 2: Create shared group
+```bash
+sudo groupadd android-course
+sudo usermod -a -G android-course installer
+sudo usermod -a -G android-course sware
+sudo chgrp -R android-course /scratch/android_course
+sudo chmod -R g+rw /scratch/android_course
+```
+
+---
+
+## API Endpoints
+
+Base URL: `https://spiderweb.richmond.edu/android`
+
+| Endpoint | Method | Auth Required | Purpose |
+|----------|--------|---------------|---------|
+| `/health` | GET | No | Health check |
+| `/upload` | POST | Yes | Upload file |
+| `/download/<filename>` | GET | Yes | Download file |
+| `/list` | GET | Yes | List files |
+| `/delete/<filename>` | DELETE | Yes | Delete file |
+
+Authentication: `X-Auth-Token` header with student token
+
+---
+
+## System Limits
+
+- **File size:** 50 MB per file
+- **Storage:** 500 MB per student
+- **Rate limit:** 10 uploads per minute
+- **Total allocation:** 9 GB (18 students × 500 MB)
+- **Allowed file types:** txt, pdf, png, jpg, jpeg, gif, json, xml, csv, zip, mp3, mp4, doc, docx
+
+---
+
+## What to Provide Professor Ware
+
+Once deployed, give her:
+
+1. **`docs/TOKEN_PLACEHOLDER_SNIPPET.md`** - Code snippet to add to her starter code
+2. **`docs/STUDENT_GUIDE.md`** - Complete API documentation for students
+3. **`policies/ACCEPTABLE_USE_POLICY.md`** - Policy she can include in syllabus
+4. **`sample_files/`** directory - Optional test files students can use
+5. **`tokens_spring2026.csv`** - For emailing individual tokens
+
+---
+
+## Updating the Application
+
+### Pull Updates from GitHub
+```bash
+cd /scratch/android_course/app
+git pull origin main
+
+# If requirements changed
+/usr/local/sw/anaconda3/bin/pip install -r requirements.txt
+
+# Restart service
 sudo systemctl restart android-api
 ```
 
-## Security Notes
+### Push Changes to GitHub
+```bash
+cd /scratch/android_course/app
+git add .
+git commit -m "Description of changes"
+git push origin main
+```
 
-- Change `ADMIN_API_KEY` before production deployment
-- Debug mode is disabled by default
-- All filenames are sanitized to prevent directory traversal
-- File extensions are validated
-- Quotas prevent storage abuse
+**⚠️ Never commit:**
+- `tokens/` directory
+- `logs/` directory
+- `uploads/` directory
+- Any file with student data
+
+The `.gitignore` file protects these automatically.
+
+---
+
+## Monitoring
+
+### Check Service Status
+```bash
+sudo systemctl status android-api
+```
+
+### View Logs
+```bash
+# Application log
+tail -f /scratch/android_course/logs/api.log
+
+# Gunicorn access log
+tail -f /scratch/android_course/logs/access.log
+
+# Gunicorn error log
+tail -f /scratch/android_course/logs/error.log
+
+# Apache logs
+sudo tail -f /var/log/httpd/error_log
+sudo tail -f /var/log/httpd/access_log
+```
+
+### Use Monitoring Scripts (from João)
+```bash
+cd /scratch/android_course/app/scripts
+./monitor.sh
+```
+
+---
+
+## Security Features
+
+✅ Token-based authentication (256-bit tokens)  
+✅ HTTPS-only access via Apache  
+✅ Per-student directory isolation  
+✅ Input sanitization and validation  
+✅ File type whitelist  
+✅ Rate limiting and quotas  
+✅ Audit logging  
+✅ FERPA compliant  
+
+---
+
+## Troubleshooting
+
+### Service won't start
+```bash
+# Check logs
+sudo journalctl -u android-api -n 50
+
+# Check if gunicorn is installed
+/usr/local/sw/anaconda3/bin/gunicorn --version
+
+# Test app directly
+cd /scratch/android_course/app
+/usr/local/sw/anaconda3/bin/python app.py
+```
+
+### Students can't connect
+```bash
+# Test proxy
+curl http://127.0.0.1:5000/android/health
+curl https://spiderweb.richmond.edu/android/health
+
+# Check Apache config
+sudo apachectl configtest
+sudo systemctl status httpd
+```
+
+### Token issues
+```bash
+# List all tokens
+cd /scratch/android_course/app
+/usr/local/sw/anaconda3/bin/python scripts/generate_tokens.py list
+
+# Regenerate token
+/usr/local/sw/anaconda3/bin/python scripts/generate_tokens.py add netid_to_regenerate
+```
+
+---
 
 ## Support
 
-- **Technical Issues:** João Tonini (jtonini@richmond.edu)
-- **Course Questions:** Prof. Shweta Ware (sware@richmond.edu)
+**Technical Issues:**
+- João Tonini: jtonini@richmond.edu
+- Academic Research Computing
 
-## License
+**Course Questions:**
+- Professor Shweta Ware: sware@richmond.edu
 
-Internal use only - University of Richmond
+---
+
+## Important Notes
+
+1. **This repo is for APPLICATION CODE only** - student data stays on spiderweb, never in git
+2. **The .gitignore protects student privacy** - it blocks tokens/, logs/, uploads/
+3. **Professor Ware provides her own starter code** - we only give her the token snippet
+4. **Sample files are optional** - she can use them or not
+5. **Acceptable Use Policy is a template** - she can modify as needed
+
+---
+
+**Version:** 3.1 (Corrected for installer user + GitHub)  
+**Last Updated:** February 4, 2026  
+**Maintainer:** João Tonini  
+**System:** spiderweb.richmond.edu

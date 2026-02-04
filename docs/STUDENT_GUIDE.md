@@ -1,362 +1,440 @@
-# Android Course File API - Student Guide
+# Android Course File Upload/Download API - Student Guide
 
-## Overview
+## Welcome!
 
-This API allows your Android app to upload and download files to/from the course server. Use this to practice HTTP POST and GET operations with input/output streams.
-
-**Base URL:** `https://spiderweb.richmond.edu/android`
-
-## Your Limits
-
-- **Storage Quota:** 500 MB per student
-- **Max File Size:** 50 MB per file
-- **Max Files:** 100 files
-- **Allowed Types:** `.txt`, `.log`
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/upload` | Upload a file |
-| GET | `/download/{student_id}/{filename}` | Download a file |
-| GET | `/files/{student_id}` | List your files |
-| GET | `/quota/{student_id}` | Check your quota |
-| DELETE | `/delete/{student_id}/{filename}` | Delete a file |
+This guide will help you use the University's file upload/download API in your Android Programming assignments. The API allows your Android app to practice HTTP POST and GET operations with real file transfers.
 
 ---
 
-## Android Code Examples
+## Your Authentication Token
+
+**Your unique token:** `[INSTRUCTOR WILL PROVIDE]`
+
+**Important:**
+- Keep your token private - don't share it with other students
+- Don't hardcode it in submitted code - use a config file or BuildConfig field
+- Your token is tied to your NetID and gives access only to your files
+
+---
+
+## API Endpoints
+
+**Base URL:** `https://spiderweb.richmond.edu/android`
 
 ### 1. Upload a File (HTTP POST)
 
-```java
-import java.io.*;
-import java.net.*;
+**Endpoint:** `POST /android/upload`
 
+**Headers:**
+```
+X-Auth-Token: YOUR_TOKEN_HERE
+Content-Type: multipart/form-data
+```
+
+**Body:** Multipart form with field name `file`
+
+**Example (Java):**
+```java
 public class FileUploader {
-    
     private static final String BASE_URL = "https://spiderweb.richmond.edu/android";
-    private static final String BOUNDARY = "----WebKitFormBoundary" + System.currentTimeMillis();
+    private static final String AUTH_TOKEN = "YOUR_TOKEN_HERE";
     
-    public static String uploadFile(String studentId, File file) throws IOException {
+    public static String uploadFile(File file) throws IOException {
         URL url = new URL(BASE_URL + "/upload");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         
-        try {
-            conn.setRequestMethod("POST");
-            conn.setDoOutput(true);
-            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + BOUNDARY);
+        String boundary = "===" + System.currentTimeMillis() + "===";
+        
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("X-Auth-Token", AUTH_TOKEN);
+        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+        
+        try (DataOutputStream out = new DataOutputStream(conn.getOutputStream());
+             FileInputStream fileIn = new FileInputStream(file)) {
             
-            try (OutputStream os = conn.getOutputStream();
-                 PrintWriter writer = new PrintWriter(new OutputStreamWriter(os, "UTF-8"), true)) {
-                
-                // Add student_id field
-                writer.append("--").append(BOUNDARY).append("\r\n");
-                writer.append("Content-Disposition: form-data; name=\"student_id\"\r\n\r\n");
-                writer.append(studentId).append("\r\n");
-                
-                // Add file field
-                writer.append("--").append(BOUNDARY).append("\r\n");
-                writer.append("Content-Disposition: form-data; name=\"file\"; filename=\"")
-                      .append(file.getName()).append("\"\r\n");
-                writer.append("Content-Type: text/plain\r\n\r\n");
-                writer.flush();
-                
-                // Write file content
-                try (FileInputStream fis = new FileInputStream(file)) {
-                    byte[] buffer = new byte[4096];
-                    int bytesRead;
-                    while ((bytesRead = fis.read(buffer)) != -1) {
-                        os.write(buffer, 0, bytesRead);
-                    }
-                }
-                os.flush();
-                
-                writer.append("\r\n");
-                writer.append("--").append(BOUNDARY).append("--\r\n");
+            // Write file part
+            out.writeBytes("--" + boundary + "\r\n");
+            out.writeBytes("Content-Disposition: form-data; name=\"file\"; filename=\"" + 
+                          file.getName() + "\"\r\n");
+            out.writeBytes("Content-Type: application/octet-stream\r\n\r\n");
+            
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = fileIn.read(buffer)) != -1) {
+                out.write(buffer, 0, bytesRead);
             }
             
-            // Read response
-            int responseCode = conn.getResponseCode();
-            InputStream is = (responseCode >= 200 && responseCode < 300) 
-                ? conn.getInputStream() 
-                : conn.getErrorStream();
-            
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
-                }
-                return response.toString();
-            }
-            
-        } finally {
-            conn.disconnect();
+            out.writeBytes("\r\n--" + boundary + "--\r\n");
+            out.flush();
         }
+        
+        int responseCode = conn.getResponseCode();
+        BufferedReader in = new BufferedReader(
+            new InputStreamReader(
+                responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream()
+            )
+        );
+        
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = in.readLine()) != null) {
+            response.append(line);
+        }
+        in.close();
+        
+        return response.toString();
     }
 }
 ```
 
-**Usage:**
-```java
-File myFile = new File(getFilesDir(), "mydata.txt");
-String response = FileUploader.uploadFile("ab1cd", myFile);
-Log.d("Upload", response);
+**Success Response (201):**
+```json
+{
+  "message": "File uploaded successfully",
+  "filename": "myfile.txt",
+  "size_bytes": 1024,
+  "current_usage_mb": 2.5,
+  "quota_mb": 500
+}
 ```
+
+**Error Responses:**
+- `401` - Missing or invalid token
+- `400` - No file provided or empty filename
+- `413` - File too large (max 50 MB)
+- `507` - Quota exceeded (max 500 MB total storage)
+- `429` - Rate limit exceeded (max 10 uploads/minute)
 
 ---
 
 ### 2. Download a File (HTTP GET)
 
-```java
-import java.io.*;
-import java.net.*;
+**Endpoint:** `GET /android/download/<filename>`
 
+**Headers:**
+```
+X-Auth-Token: YOUR_TOKEN_HERE
+```
+
+**Example (Java):**
+```java
 public class FileDownloader {
-    
     private static final String BASE_URL = "https://spiderweb.richmond.edu/android";
+    private static final String AUTH_TOKEN = "YOUR_TOKEN_HERE";
     
-    public static void downloadFile(String studentId, String filename, File destination) 
-            throws IOException {
-        
-        URL url = new URL(BASE_URL + "/download/" + studentId + "/" + filename);
+    public static void downloadFile(String filename, File outputFile) throws IOException {
+        URL url = new URL(BASE_URL + "/download/" + filename);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         
-        try {
-            conn.setRequestMethod("GET");
-            
-            int responseCode = conn.getResponseCode();
-            if (responseCode != 200) {
-                throw new IOException("Download failed: HTTP " + responseCode);
-            }
-            
-            try (InputStream is = conn.getInputStream();
-                 FileOutputStream fos = new FileOutputStream(destination)) {
+        conn.setRequestMethod("GET");
+        conn.setRequestProperty("X-Auth-Token", AUTH_TOKEN);
+        
+        int responseCode = conn.getResponseCode();
+        if (responseCode == HttpURLConnection.HTTP_OK) {
+            try (InputStream in = conn.getInputStream();
+                 FileOutputStream out = new FileOutputStream(outputFile)) {
                 
                 byte[] buffer = new byte[4096];
                 int bytesRead;
-                while ((bytesRead = is.read(buffer)) != -1) {
-                    fos.write(buffer, 0, bytesRead);
+                while ((bytesRead = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, bytesRead);
                 }
             }
-            
-        } finally {
-            conn.disconnect();
+        } else {
+            throw new IOException("Download failed: " + responseCode);
         }
     }
 }
 ```
 
-**Usage:**
-```java
-File downloadedFile = new File(getFilesDir(), "downloaded.txt");
-FileDownloader.downloadFile("ab1cd", "mydata.txt", downloadedFile);
-```
+**Success Response:** File binary data
+
+**Error Responses:**
+- `401` - Missing or invalid token
+- `404` - File not found
+- `403` - Invalid file path
 
 ---
 
 ### 3. List Your Files (HTTP GET)
 
-```java
-import java.io.*;
-import java.net.*;
+**Endpoint:** `GET /android/list`
 
-public class FileList {
+**Headers:**
+```
+X-Auth-Token: YOUR_TOKEN_HERE
+```
+
+**Example (Java):**
+```java
+public static String listFiles() throws IOException {
+    URL url = new URL(BASE_URL + "/list");
+    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
     
-    private static final String BASE_URL = "https://spiderweb.richmond.edu/android";
+    conn.setRequestMethod("GET");
+    conn.setRequestProperty("X-Auth-Token", AUTH_TOKEN);
     
-    public static String listFiles(String studentId) throws IOException {
-        URL url = new URL(BASE_URL + "/files/" + studentId);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        
-        try {
-            conn.setRequestMethod("GET");
-            
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(conn.getInputStream()))) {
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
-                }
-                return response.toString();
-            }
-            
-        } finally {
-            conn.disconnect();
-        }
+    BufferedReader in = new BufferedReader(
+        new InputStreamReader(conn.getInputStream())
+    );
+    
+    StringBuilder response = new StringBuilder();
+    String line;
+    while ((line = in.readLine()) != null) {
+        response.append(line);
     }
+    in.close();
+    
+    return response.toString();
 }
 ```
 
-**Example Response:**
+**Success Response (200):**
 ```json
 {
-  "success": true,
-  "student_id": "ab1cd",
   "files": [
     {
-      "filename": "mydata.txt",
-      "size": 1024,
-      "size_formatted": "1.0 KB",
-      "uploaded": "2026-01-15T10:30:00"
+      "filename": "photo1.jpg",
+      "size_bytes": 204800,
+      "modified": "2026-01-20T14:30:00"
+    },
+    {
+      "filename": "data.json",
+      "size_bytes": 1024,
+      "modified": "2026-01-20T15:45:00"
     }
   ],
-  "file_count": 1,
-  "total_size_formatted": "1.0 KB"
+  "total_files": 2,
+  "total_usage_mb": 0.2,
+  "quota_mb": 500,
+  "remaining_mb": 499.8
 }
 ```
 
 ---
 
-### 4. Check Your Quota (HTTP GET)
+### 4. Delete a File (HTTP DELETE)
 
+**Endpoint:** `DELETE /android/delete/<filename>`
+
+**Headers:**
+```
+X-Auth-Token: YOUR_TOKEN_HERE
+```
+
+**Example (Java):**
 ```java
-public static String checkQuota(String studentId) throws IOException {
-    URL url = new URL(BASE_URL + "/quota/" + studentId);
+public static String deleteFile(String filename) throws IOException {
+    URL url = new URL(BASE_URL + "/delete/" + filename);
     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
     
-    try {
-        conn.setRequestMethod("GET");
-        
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(conn.getInputStream()))) {
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-            return response.toString();
-        }
-        
-    } finally {
-        conn.disconnect();
+    conn.setRequestMethod("DELETE");
+    conn.setRequestProperty("X-Auth-Token", AUTH_TOKEN);
+    
+    BufferedReader in = new BufferedReader(
+        new InputStreamReader(conn.getInputStream())
+    );
+    
+    StringBuilder response = new StringBuilder();
+    String line;
+    while ((line = in.readLine()) != null) {
+        response.append(line);
     }
+    in.close();
+    
+    return response.toString();
 }
 ```
 
-**Example Response:**
+**Success Response (200):**
 ```json
 {
-  "success": true,
-  "student_id": "ab1cd",
-  "quota": {
-    "used_formatted": "1.0 KB",
-    "limit_formatted": "500.0 MB",
-    "available_formatted": "499.9 MB",
-    "percentage_used": 0.0
-  },
-  "files": {
-    "count": 1,
-    "limit": 100
-  }
+  "message": "File deleted successfully",
+  "filename": "data.json",
+  "current_usage_mb": 0.2,
+  "quota_mb": 500
 }
 ```
 
 ---
 
-### 5. Delete a File (HTTP DELETE)
+## Allowed File Types
 
-```java
-public static String deleteFile(String studentId, String filename) throws IOException {
-    URL url = new URL(BASE_URL + "/delete/" + studentId + "/" + filename);
-    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-    
-    try {
-        conn.setRequestMethod("DELETE");
-        
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(conn.getInputStream()))) {
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-            return response.toString();
-        }
-        
-    } finally {
-        conn.disconnect();
-    }
-}
-```
+The following file extensions are supported:
+- Documents: `txt`, `pdf`, `doc`, `docx`, `csv`, `json`, `xml`
+- Images: `png`, `jpg`, `jpeg`, `gif`
+- Media: `mp3`, `mp4`
+- Archives: `zip`
 
 ---
 
-## Testing with curl (Command Line)
+## Limits and Quotas
 
-You can test the API from your computer using curl:
-
-```bash
-# Upload a file
-curl -X POST \
-  -F "student_id=ab1cd" \
-  -F "file=@myfile.txt" \
-  https://spiderweb.richmond.edu/android/upload
-
-# Download a file
-curl -O https://spiderweb.richmond.edu/android/download/ab1cd/myfile.txt
-
-# List files
-curl https://spiderweb.richmond.edu/android/files/ab1cd
-
-# Check quota
-curl https://spiderweb.richmond.edu/android/quota/ab1cd
-
-# Delete a file
-curl -X DELETE https://spiderweb.richmond.edu/android/delete/ab1cd/myfile.txt
-```
-
----
-
-## Error Handling
-
-Always check the `success` field in responses:
-
-```java
-// Parse JSON response
-JSONObject json = new JSONObject(response);
-if (json.getBoolean("success")) {
-    // Operation succeeded
-    String filename = json.getString("filename");
-} else {
-    // Operation failed
-    String error = json.getString("error");
-    Log.e("API", "Error: " + error);
-}
-```
-
-**Common Errors:**
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| "Invalid student_id" | NetID format wrong | Use your UR NetID (alphanumeric) |
-| "File type not allowed" | Wrong extension | Use .txt or .log files only |
-| "Quota exceeded" | Out of space | Delete old files |
-| "File too large" | File > 50 MB | Use smaller files |
+| Limit | Value |
+|-------|-------|
+| Max file size | 50 MB |
+| Total storage per student | 500 MB |
+| Upload rate limit | 10 uploads/minute |
 
 ---
 
 ## Important Notes
 
-1. **Use Your NetID:** Your `student_id` must be your University of Richmond NetID (e.g., "ab1cd")
+### 1. Network Operations on Background Thread
 
-2. **Network Thread:** Always run network operations on a background thread in Android:
-   ```java
-   new Thread(() -> {
-       try {
-           String result = FileUploader.uploadFile("ab1cd", file);
-           runOnUiThread(() -> updateUI(result));
-       } catch (IOException e) {
-           e.printStackTrace();
-       }
-   }).start();
-   ```
+**ALWAYS** run network operations on a background thread in Android. The UI thread will throw `NetworkOnMainThreadException` if you don't:
 
-3. **VPN Required:** If you're off-campus, connect to the University VPN first.
+```java
+// Good - using a background thread
+new Thread(() -> {
+    try {
+        String result = FileUploader.uploadFile(file);
+        runOnUiThread(() -> {
+            // Update UI with result
+            Toast.makeText(this, "Upload success!", Toast.LENGTH_SHORT).show();
+        });
+    } catch (IOException e) {
+        runOnUiThread(() -> {
+            Toast.makeText(this, "Upload failed: " + e.getMessage(), 
+                         Toast.LENGTH_SHORT).show();
+        });
+    }
+}).start();
 
-4. **Data Retention:** Files are deleted at the end of the semester. Download anything you need to keep!
+// Better - using AsyncTask or modern alternatives (Kotlin Coroutines, RxJava)
+```
+
+### 2. Error Handling
+
+Always handle errors gracefully:
+
+```java
+try {
+    String response = FileUploader.uploadFile(file);
+    JSONObject json = new JSONObject(response);
+    
+    if (json.has("error")) {
+        // Handle error
+        String error = json.getString("error");
+        Log.e("Upload", "Error: " + error);
+    } else {
+        // Handle success
+        String filename = json.getString("filename");
+        Log.i("Upload", "Uploaded: " + filename);
+    }
+} catch (IOException e) {
+    Log.e("Upload", "Network error", e);
+} catch (JSONException e) {
+    Log.e("Upload", "JSON parsing error", e);
+}
+```
+
+### 3. Testing from Campus
+
+- **On campus:** API should work directly
+- **Off campus:** Connect to University VPN first
+
+### 4. Data Privacy
+
+- You can only access files in your own directory
+- Other students cannot see your files
+- Files are deleted at the end of the semester (download anything you want to keep!)
+
+---
+
+## Example: Complete Android Activity
+
+```java
+public class FileActivity extends AppCompatActivity {
+    private static final String BASE_URL = "https://spiderweb.richmond.edu/android";
+    private static final String AUTH_TOKEN = BuildConfig.API_TOKEN; // From gradle
+    
+    private Button uploadButton;
+    private Button listButton;
+    private TextView resultText;
+    
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_file);
+        
+        uploadButton = findViewById(R.id.uploadButton);
+        listButton = findViewById(R.id.listButton);
+        resultText = findViewById(R.id.resultText);
+        
+        uploadButton.setOnClickListener(v -> uploadFile());
+        listButton.setOnClickListener(v -> listFiles());
+    }
+    
+    private void uploadFile() {
+        // Get file from app's cache or user selection
+        File file = new File(getCacheDir(), "test.txt");
+        
+        new Thread(() -> {
+            try {
+                String response = doUpload(file);
+                runOnUiThread(() -> resultText.setText(response));
+            } catch (Exception e) {
+                runOnUiThread(() -> 
+                    resultText.setText("Error: " + e.getMessage())
+                );
+            }
+        }).start();
+    }
+    
+    private void listFiles() {
+        new Thread(() -> {
+            try {
+                String response = doList();
+                runOnUiThread(() -> resultText.setText(response));
+            } catch (Exception e) {
+                runOnUiThread(() -> 
+                    resultText.setText("Error: " + e.getMessage())
+                );
+            }
+        }).start();
+    }
+    
+    private String doUpload(File file) throws IOException {
+        // Implementation from earlier example
+        // ...
+        return response;
+    }
+    
+    private String doList() throws IOException {
+        // Implementation from earlier example
+        // ...
+        return response;
+    }
+}
+```
+
+---
+
+## Troubleshooting
+
+### "Missing authentication token"
+- Check that you're setting the `X-Auth-Token` header
+- Verify your token value is correct
+
+### "NetworkOnMainThreadException"
+- You're running network code on the UI thread
+- Move the code to a background thread
+
+### "Connection refused" or timeout
+- Check your internet connection
+- If off-campus, connect to University VPN
+- Verify the URL is correct
+
+### "File too large"
+- File exceeds 50 MB limit
+- Compress or split the file
+
+### "Quota exceeded"
+- You've used all 500 MB of storage
+- Delete old files using the `/delete` endpoint
+- Use `/list` to see your current usage
 
 ---
 
@@ -364,3 +442,10 @@ if (json.getBoolean("success")) {
 
 - **Technical Issues:** Contact João Tonini (jtonini@richmond.edu)
 - **Course Questions:** Contact Prof. Ware (sware@richmond.edu)
+- **Lost Token:** Contact your instructor for a new token
+
+---
+
+**Remember:** This is a learning environment. The focus is on understanding HTTP operations and input/output streams in Android, not on building a production file storage system!
+
+Happy coding! 🚀

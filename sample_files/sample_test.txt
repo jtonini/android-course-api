@@ -1,0 +1,19 @@
+Android Course API Test File
+============================
+
+This is a sample text file for testing your file upload functionality.
+
+Test Information:
+- File Type: Plain Text (.txt)
+- Purpose: Testing HTTP POST upload
+- Size: Small (< 1 KB)
+
+Instructions:
+1. Use this file to test your upload code
+2. Verify it appears in your file list
+3. Download it back to confirm successful round-trip
+4. Practice error handling with invalid files
+
+Remember: This is test data only. Never upload personal or sensitive information.
+
+Happy coding!

@@ -65,13 +65,13 @@ cd /android-course-api
 git init
 git add .
 git commit -m "Initial commit - Android Course API"
-git remote add origin git@github.com:yourusername/android-course-api.git
+git remote add origin git@github.com:jtonini/android-course-api.git
 git push -u origin main
 ```
 
 ### 2. What Gets Committed to GitHub
 
-✅ **Committed (safe to share):**
+**Committed (safe to share):**
 - `app.py` - Flask application
 - `android-api.conf` - Apache config
 - `android-api.service` - systemd service
@@ -83,7 +83,7 @@ git push -u origin main
 - `.gitignore` - Git ignore rules
 - `config/tokens.json.template` - Empty template
 
-❌ **NOT Committed (in .gitignore):**
+**NOT Committed (in .gitignore):**
 - `tokens/` - Student tokens (sensitive!)
 - `uploads/` - Student files (private!)
 - `logs/` - Application logs
@@ -121,7 +121,7 @@ cp config/tokens.json.template /scratch/android_course/tokens/tokens.json
 ```bash
 # As installer user on spiderweb
 cd /scratch/android_course
-git clone git@github.com:yourusername/android-course-api.git app
+git clone git@github.com:jtonini/android-course-api.git app
 cd app
 ```
 
@@ -145,8 +145,8 @@ chmod 644 /scratch/android_course/tokens/tokens.json
 #### 4. Install System Services (as root)
 ```bash
 # Copy files
-sudo cp android-api.service /etc/systemd/system/
-sudo cp android-api.conf /etc/httpd/conf.d/
+sudo cp /scratch/androi_course/android-api.service /etc/systemd/system/
+sudo cp /scratch/android_course/android-api.conf /etc/httpd/conf.d/
 
 # Enable and start services
 sudo systemctl daemon-reload

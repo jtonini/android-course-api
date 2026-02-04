@@ -94,7 +94,7 @@ git push -u origin main
 ```bash
 # On spiderweb (as installer)
 cd /scratch/android_course
-git clone git@github.com:yourusername/android-course-api.git app
+git clone git@github.com:jtonini/android-course-api.git app
 cd app
 
 # Create the gitignored directories

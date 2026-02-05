@@ -25,9 +25,9 @@ REST API for Android Programming students to practice HTTP POST/GET operations w
 │   │   └── TOKEN_PLACEHOLDER_SNIPPET.md  # For Prof. Ware's starter code
 │   ├── scripts/
 │   │   ├── generate_tokens.py    # Token management
-│   │   ├── cleanup.sh            # Cleanup script (from João)
-│   │   ├── monitor.sh            # Monitoring script (from João)
-│   │   └── notify_students.sh    # Notification script (from João)
+│   │   ├── cleanup.sh            # Cleanup script
+│   │   ├── monitor.sh            # Monitoring script
+│   │   └── notify_students.sh    # Notification script
 │   ├── sample_files/             # Optional test files for students
 │   │   ├── sample_test.txt
 │   │   ├── test_data.json

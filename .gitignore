@@ -47,3 +47,19 @@ config/local.py
 # Test files created during development
 test_*.txt
 temp_*
+
+# Configuration - NEVER COMMIT
+config.toml
+*.toml
+!config.toml.example
+
+# Archives (unless intentional)
+*.zip
+
+# Configuration - NEVER COMMIT
+config.toml
+*.toml
+!config.toml.example
+
+# Archives
+*.zip

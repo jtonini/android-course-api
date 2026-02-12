@@ -1,0 +1,80 @@
+# Android Course API Configuration Template
+# Copy this file to config.toml and customize for your deployment
+# DO NOT commit config.toml to version control!
+
+[server]
+# Base URL where the API will be accessible
+base_url = "https://YOUR_SERVER.edu/android"
+
+# Host and port for the Flask app (usually localhost)
+host = "127.0.0.1"
+port = 5000
+
+# Number of gunicorn workers
+workers = 2
+
+# Request timeout in seconds
+timeout = 120
+
+[paths]
+# Base directory for student file uploads
+upload_dir = "/path/to/uploads"
+
+# Directory for storing authentication tokens
+token_dir = "/path/to/tokens"
+
+# Directory for application logs
+log_dir = "/path/to/logs"
+
+[storage]
+# Maximum file size in MB
+max_file_size_mb = 50
+
+# Storage quota per student in MB
+student_quota_mb = 500
+
+# Rate limit: maximum uploads per minute
+rate_limit = 10
+
+# Allowed file extensions (comma-separated)
+allowed_extensions = "txt,pdf,png,jpg,jpeg,gif,json,xml,csv,zip,mp3,mp4,doc,docx"
+
+[logging]
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+level = "INFO"
+
+# Log format
+format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+[security]
+# Require HTTPS for all connections
+require_https = true
+
+# Enable rate limiting
+enable_rate_limiting = true
+
+[service]
+# System user to run the service as
+user = "installer"
+
+# System group
+group = "installer"
+
+# Working directory for the service
+working_dir = "/path/to/app"
+
+# Path to Python/Anaconda
+python_path = "/usr/bin/python3"
+
+# Path to gunicorn
+gunicorn_path = "/usr/bin/gunicorn"
+
+[apache]
+# Apache configuration file location
+conf_dir = "/etc/httpd/conf.d"
+
+# Apache proxy location (URL path)
+location = "/android"
+
+# Max request body size in MB (for file uploads)
+max_request_body_mb = 52

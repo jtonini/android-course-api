@@ -93,15 +93,15 @@ def validate_token(token):
         return None
     
     tokens = load_tokens()
-    netid = tokens.get(token)
     
-    if netid:
-        logger.debug(f"Token validated for NetID: {netid}")
-    else:
-        logger.warning(f"Invalid token attempted")
+    # Search for token in values, return the key (netid)
+    for netid, stored_token in tokens.items():
+        if stored_token == token:
+            logger.debug(f"Token validated for NetID: {netid}")
+            return netid
     
-    return netid
-
+    logger.warning(f"Invalid token attempted")
+    return None
 
 def get_student_dir(netid):
     """Get student's upload directory path"""

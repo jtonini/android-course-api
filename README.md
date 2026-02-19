@@ -5,7 +5,7 @@ REST API for Android Programming students to practice HTTP POST/GET operations w
 **Course:** Android Programming - Spring 2026  
 **Instructor:** Professor Shweta Ware  
 **Students:** 18 (17 + instructor)  
-**System:** spiderweb.richmond.edu  
+**System:** still.richmond.edu  
 **User:** installer  
 
 ---

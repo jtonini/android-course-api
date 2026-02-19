@@ -122,11 +122,11 @@ function listFiles() {
             echo str_repeat("-", 70) . "\n";
             
             foreach ($files as $file) {
-                printf("%-30s %-15d %-20s\n", 
-                    $file['name'], 
-                    $file['size'],
-                    date('Y-m-d H:i:s', $file['modified'])
-                );
+            printf("%-30s %-15d %-20s\n", 
+                $file['filename'], 
+                $file['size_bytes'],
+                $file['modified']  // Already formatted as string
+            );
             }
         } else {
             echo "No files uploaded yet.\n";

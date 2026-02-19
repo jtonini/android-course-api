@@ -1,65 +1,106 @@
 #!/usr/bin/env python3
 """
 Android Course File Upload/Download REST API
-Supports HTTP POST for file uploads and HTTP GET for downloads
-Per-student directory isolation with quotas and rate limiting
+Reads configuration from config.toml
 """
 
 from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 import os
 import json
-import hashlib
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 import logging
+import time
+import tomllib  # Python 3.11+ or use 'tomli' for older versions
 
 app = Flask(__name__)
 
-# Configuration
-BASE_UPLOAD_DIR = os.environ.get('UPLOAD_DIR', '/scratch/android_course/uploads')
-TOKEN_FILE = os.environ.get('TOKEN_FILE', '/scratch/android_course/tokens/tokens.json')
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-STUDENT_QUOTA = 500 * 1024 * 1024  # 500 MB per student
-RATE_LIMIT = 10  # uploads per minute
-ALLOWED_EXTENSIONS = {
-    'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'json', 'xml', 
-    'csv', 'zip', 'mp3', 'mp4', 'doc', 'docx'
-}
+# Load configuration from config.toml
+def load_config():
+    """Load configuration from config.toml file"""
+    config_file = os.path.join(os.path.dirname(__file__), 'config.toml')
+    
+    if not os.path.exists(config_file):
+        raise FileNotFoundError(
+            "config.toml not found. Please run setup_wizard.py first or "
+            "copy config.toml.example to config.toml and customize it."
+        )
+    
+    with open(config_file, 'rb') as f:
+        return tomllib.load(f)
+
+# Load configuration
+try:
+    CONFIG = load_config()
+except tomllib.TOMLDecodeError as e:
+    print(f"Error parsing config.toml: {e}")
+    exit(1)
+except FileNotFoundError as e:
+    print(f"ERROR: {e}")
+    exit(1)
+
+# Extract configuration values
+BASE_UPLOAD_DIR = CONFIG['paths']['upload_dir']
+TOKEN_FILE = os.path.join(CONFIG['paths']['token_dir'], 'tokens.json')
+MAX_FILE_SIZE = CONFIG['storage']['max_file_size_mb'] * 1024 * 1024
+STUDENT_QUOTA = CONFIG['storage']['student_quota_mb'] * 1024 * 1024
+RATE_LIMIT = CONFIG['storage']['rate_limit']
+ALLOWED_EXTENSIONS = set(CONFIG['storage']['allowed_extensions'].split(','))
 
 # Rate limiting storage (in production, use Redis)
 upload_counts = {}
 
 # Logging setup
+log_file = os.path.join(CONFIG['paths']['log_dir'], 'api.log')
+os.makedirs(CONFIG['paths']['log_dir'], exist_ok=True)
+
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=getattr(logging, CONFIG['logging']['level']),
+    format=CONFIG['logging']['format'],
     handlers=[
-        logging.FileHandler('/scratch/android_course/logs/api.log'),
+        logging.FileHandler(log_file),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
+logger.info(f"Configuration loaded from config.toml")
+logger.info(f"Upload directory: {BASE_UPLOAD_DIR}")
+logger.info(f"Token file: {TOKEN_FILE}")
+
 
 def load_tokens():
-    """Load student tokens from JSON file"""
+    """Load authentication tokens from file"""
+    if not os.path.exists(TOKEN_FILE):
+        logger.warning(f"Token file not found: {TOKEN_FILE}")
+        return {}
+    
     try:
         with open(TOKEN_FILE, 'r') as f:
             return json.load(f)
-    except FileNotFoundError:
-        logger.error(f"Token file not found: {TOKEN_FILE}")
+    except json.JSONDecodeError:
+        logger.error(f"Invalid JSON in token file: {TOKEN_FILE}")
         return {}
 
 
 def validate_token(token):
-    """Validate token and return student netid"""
+    """
+    Validate authentication token and return associated NetID
+    Returns NetID if valid, None if invalid
+    """
+    if not token:
+        return None
+    
     tokens = load_tokens()
-    for netid, student_token in tokens.items():
-        if student_token == token:
-            return netid
-    return None
+    netid = tokens.get(token)
+    
+    if netid:
+        logger.debug(f"Token validated for NetID: {netid}")
+    else:
+        logger.warning(f"Invalid token attempted")
+    
+    return netid
 
 
 def get_student_dir(netid):
@@ -70,13 +111,16 @@ def get_student_dir(netid):
 
 
 def get_directory_size(path):
-    """Calculate total size of directory"""
+    """Calculate total size of directory in bytes"""
     total = 0
-    for entry in os.scandir(path):
-        if entry.is_file():
-            total += entry.stat().st_size
-        elif entry.is_dir():
-            total += get_directory_size(entry.path)
+    try:
+        for entry in os.scandir(path):
+            if entry.is_file(follow_symlinks=False):
+                total += entry.stat().st_size
+            elif entry.is_dir(follow_symlinks=False):
+                total += get_directory_size(entry.path)
+    except PermissionError:
+        logger.warning(f"Permission denied calculating size: {path}")
     return total
 
 
@@ -86,19 +130,24 @@ def allowed_file(filename):
 
 
 def check_rate_limit(netid):
-    """Check if student has exceeded upload rate limit"""
-    current_time = time.time()
+    """Check if user has exceeded rate limit"""
+    if not CONFIG['security']['enable_rate_limiting']:
+        return True
+    
+    now = time.time()
     
     if netid not in upload_counts:
         upload_counts[netid] = []
     
-    # Remove uploads older than 1 minute
-    upload_counts[netid] = [t for t in upload_counts[netid] if current_time - t < 60]
+    # Remove old entries (older than 1 minute)
+    upload_counts[netid] = [t for t in upload_counts[netid] if now - t < 60]
     
+    # Check limit
     if len(upload_counts[netid]) >= RATE_LIMIT:
         return False
     
-    upload_counts[netid].append(current_time)
+    # Add current timestamp
+    upload_counts[netid].append(now)
     return True
 
 
@@ -108,19 +157,16 @@ def upload_file():
     try:
         # Validate token
         token = request.headers.get('X-Auth-Token')
-        if not token:
-            logger.warning("Upload attempt without token")
-            return jsonify({'error': 'Missing authentication token'}), 401
-        
         netid = validate_token(token)
+        
         if not netid:
-            logger.warning(f"Invalid token attempt: {token[:8]}...")
-            return jsonify({'error': 'Invalid authentication token'}), 401
+            logger.warning(f"Upload attempt with invalid token from {request.remote_addr}")
+            return jsonify({'error': 'Invalid or missing authentication token'}), 401
         
         # Check rate limit
         if not check_rate_limit(netid):
             logger.warning(f"Rate limit exceeded for {netid}")
-            return jsonify({'error': 'Rate limit exceeded. Maximum 10 uploads per minute'}), 429
+            return jsonify({'error': f'Rate limit exceeded. Maximum {RATE_LIMIT} uploads per minute'}), 429
         
         # Check if file present in request
         if 'file' not in request.files:
@@ -132,7 +178,10 @@ def upload_file():
         
         # Validate file type
         if not allowed_file(file.filename):
-            return jsonify({'error': 'File type not allowed'}), 400
+            return jsonify({
+                'error': 'File type not allowed',
+                'allowed_types': list(ALLOWED_EXTENSIONS)
+            }), 400
         
         # Check file size
         file.seek(0, os.SEEK_END)
@@ -140,7 +189,11 @@ def upload_file():
         file.seek(0)
         
         if file_size > MAX_FILE_SIZE:
-            return jsonify({'error': f'File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.0f} MB'}), 413
+            return jsonify({
+                'error': f'File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.0f} MB',
+                'file_size_mb': file_size / (1024*1024),
+                'max_size_mb': MAX_FILE_SIZE / (1024*1024)
+            }), 413
         
         # Check quota
         student_dir = get_student_dir(netid)
@@ -152,7 +205,8 @@ def upload_file():
                 'error': 'Quota exceeded',
                 'current_usage_mb': current_usage / (1024*1024),
                 'quota_mb': STUDENT_QUOTA / (1024*1024),
-                'remaining_mb': remaining / (1024*1024)
+                'remaining_mb': remaining / (1024*1024),
+                'file_size_mb': file_size / (1024*1024)
             }), 507
         
         # Save file
@@ -169,19 +223,18 @@ def upload_file():
         
         file.save(filepath)
         
-        # Log successful upload
         logger.info(f"Upload successful - NetID: {netid}, File: {filename}, Size: {file_size} bytes")
         
         return jsonify({
             'message': 'File uploaded successfully',
             'filename': filename,
             'size_bytes': file_size,
-            'current_usage_mb': (current_usage + file_size) / (1024*1024),
+            'current_usage_mb': round((current_usage + file_size) / (1024*1024), 2),
             'quota_mb': STUDENT_QUOTA / (1024*1024)
         }), 201
         
     except Exception as e:
-        logger.error(f"Upload error: {str(e)}")
+        logger.error(f"Upload error: {str(e)}", exc_info=True)
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -191,14 +244,10 @@ def download_file(filename):
     try:
         # Validate token
         token = request.headers.get('X-Auth-Token')
-        if not token:
-            logger.warning("Download attempt without token")
-            return jsonify({'error': 'Missing authentication token'}), 401
-        
         netid = validate_token(token)
+        
         if not netid:
-            logger.warning(f"Invalid token attempt: {token[:8]}...")
-            return jsonify({'error': 'Invalid authentication token'}), 401
+            return jsonify({'error': 'Invalid or missing authentication token'}), 401
         
         # Get student directory
         student_dir = get_student_dir(netid)
@@ -213,13 +262,12 @@ def download_file(filename):
             logger.warning(f"Directory traversal attempt by {netid}: {filename}")
             return jsonify({'error': 'Invalid file path'}), 403
         
-        # Log successful download
         logger.info(f"Download successful - NetID: {netid}, File: {filename}")
         
         return send_file(filepath, as_attachment=True)
         
     except Exception as e:
-        logger.error(f"Download error: {str(e)}")
+        logger.error(f"Download error: {str(e)}", exc_info=True)
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -229,12 +277,10 @@ def list_files():
     try:
         # Validate token
         token = request.headers.get('X-Auth-Token')
-        if not token:
-            return jsonify({'error': 'Missing authentication token'}), 401
-        
         netid = validate_token(token)
+        
         if not netid:
-            return jsonify({'error': 'Invalid authentication token'}), 401
+            return jsonify({'error': 'Invalid or missing authentication token'}), 401
         
         # Get student directory
         student_dir = get_student_dir(netid)
@@ -250,19 +296,22 @@ def list_files():
                     'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
                 })
         
+        # Sort by modification time (newest first)
+        files.sort(key=lambda x: x['modified'], reverse=True)
+        
         # Get usage stats
         total_usage = get_directory_size(student_dir)
         
         return jsonify({
             'files': files,
             'total_files': len(files),
-            'total_usage_mb': total_usage / (1024*1024),
+            'total_usage_mb': round(total_usage / (1024*1024), 2),
             'quota_mb': STUDENT_QUOTA / (1024*1024),
-            'remaining_mb': (STUDENT_QUOTA - total_usage) / (1024*1024)
+            'remaining_mb': round((STUDENT_QUOTA - total_usage) / (1024*1024), 2)
         }), 200
         
     except Exception as e:
-        logger.error(f"List error: {str(e)}")
+        logger.error(f"List error: {str(e)}", exc_info=True)
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -272,12 +321,10 @@ def delete_file(filename):
     try:
         # Validate token
         token = request.headers.get('X-Auth-Token')
-        if not token:
-            return jsonify({'error': 'Missing authentication token'}), 401
-        
         netid = validate_token(token)
+        
         if not netid:
-            return jsonify({'error': 'Invalid authentication token'}), 401
+            return jsonify({'error': 'Invalid or missing authentication token'}), 401
         
         # Get student directory
         student_dir = get_student_dir(netid)
@@ -295,7 +342,6 @@ def delete_file(filename):
         # Delete file
         os.remove(filepath)
         
-        # Log successful deletion
         logger.info(f"Delete successful - NetID: {netid}, File: {filename}")
         
         # Get updated usage
@@ -304,27 +350,35 @@ def delete_file(filename):
         return jsonify({
             'message': 'File deleted successfully',
             'filename': filename,
-            'current_usage_mb': total_usage / (1024*1024),
+            'current_usage_mb': round(total_usage / (1024*1024), 2),
             'quota_mb': STUDENT_QUOTA / (1024*1024)
         }), 200
         
     except Exception as e:
-        logger.error(f"Delete error: {str(e)}")
+        logger.error(f"Delete error: {str(e)}", exc_info=True)
         return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/android/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint (no authentication required)"""
     return jsonify({
         'status': 'healthy',
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'version': '1.0.0'
     }), 200
 
 
 if __name__ == '__main__':
-    # Create base upload directory
+    # Create base directories
     os.makedirs(BASE_UPLOAD_DIR, exist_ok=True)
+    os.makedirs(CONFIG['paths']['token_dir'], exist_ok=True)
+    os.makedirs(CONFIG['paths']['log_dir'], exist_ok=True)
     
-    # Run Flask app
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Run Flask app (development mode)
+    logger.info("Starting Flask development server")
+    app.run(
+        host=CONFIG['server']['host'],
+        port=CONFIG['server']['port'],
+        debug=False
+    )

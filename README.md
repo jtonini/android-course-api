@@ -399,3 +399,31 @@ cd /scratch/android_course/app
 **Last Updated:** February 4, 2026  
 **Maintainer:** João Tonini  
 **System:** spiderweb.richmond.edu
+
+## Deployment Configuration
+
+This application uses `config.toml` for deployment-specific settings.
+
+### Quick Start
+
+1. Copy the example configuration:
+```bash
+   cp config.toml.example config.toml
+```
+
+2. Edit `config.toml` with your server paths:
+   - Upload directory location
+   - Token storage location
+   - Log directory
+   - Service user/group
+
+3. **Important:** Never commit `config.toml` - it's protected by `.gitignore`
+
+### Production Deployment
+
+- Uses systemd service: `android-api.service`
+- Apache reverse proxy: `android-api.conf`
+- Runs as dedicated service user
+
+See `config.toml.example` for all configuration options.
+

@@ -141,40 +141,6 @@ function listFiles() {
 /**
  * Download a file
  */
-function downloadFile($filename, $savePath = null) {
-    echo "=== Downloading File ===\n";
-    echo "Filename: $filename\n";
-    
-    $url = API_BASE_URL . '/download/' . urlencode($filename);
-    $ch = curl_init();
-    
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'X-Auth-Token: ' . STUDENT_TOKEN
-    ]);
-    
-    $content = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    
-    if ($httpCode === 200) {
-        if ($savePath) {
-            file_put_contents($savePath, $content);
-            echo "[OK] Downloaded to: $savePath\n";
-            echo "Size: " . strlen($content) . " bytes\n";
-        } else {
-            echo "[OK] Downloaded (not saved)\n";
-            echo "Size: " . strlen($content) . " bytes\n";
-        }
-        return true;
-    } else {
-        echo "[FAIL] Download failed\n";
-        echo "HTTP Code: $httpCode\n";
-        return false;
-    }
-    echo "\n";
-}
 
 /**
  * Get storage quota information
@@ -234,10 +200,6 @@ uploadFile($testFile);
 unlink($testFile);
 */
 
-// Example 5: Download a file (uncomment to test)
-/*
-downloadFile('test.txt', '/tmp/downloaded_test.txt');
-*/
 
 echo "================================================================\n";
 echo "  Complete! Check the examples above.\n";
@@ -277,34 +239,6 @@ function batchUpload($directory) {
 /**
  * Example: Create backup of all files
  */
-function backupAllFiles($backupDir) {
-    echo "=== Backing Up All Files ===\n";
-    
-    if (!is_dir($backupDir)) {
-        mkdir($backupDir, 0755, true);
-    }
-    
-    $result = apiRequest('/list');
-    if ($result['http_code'] !== 200) {
-        echo "[FAIL] Failed to list files\n";
-        return;
-    }
-    
-    $files = $result['data']['files'];
-    echo "Found " . count($files) . " files to backup\n";
-    
-    foreach ($files as $file) {
-        $savePath = $backupDir . '/' . $file['name'];
-        echo "Downloading: " . $file['name'] . "... ";
-        if (downloadFile($file['name'], $savePath)) {
-            echo "[OK]\n";
-        } else {
-            echo "[FAIL]\n";
-        }
-    }
-    
-    echo "Backup complete!\n\n";
-}
 
 /**
  * Example: Check file exists before upload

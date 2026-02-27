@@ -10,7 +10,7 @@ Add this section to your Android app's configuration:
  */
 public class ApiConfig {
     // Base URL for the file upload API
-    private static final String BASE_URL = "https://spiderweb.richmond.edu/android";
+    private static final String BASE_URL = "https://yourserver.yourdomain.edu/android";
     
     // TODO: Replace with your personal token from João
     // DO NOT share your token with other students
@@ -112,13 +112,13 @@ To verify your token is working:
 
 1. **Test the health endpoint (no auth required):**
    ```java
-   URL url = new URL("https://spiderweb.richmond.edu/android/health");
+   URL url = new URL("https://yourserver.yourdomain.edu/android/health");
    // Should return: {"status":"healthy","timestamp":"..."}
    ```
 
 2. **Test list endpoint (requires auth):**
    ```java
-   URL url = new URL("https://spiderweb.richmond.edu/android/list");
+   URL url = new URL("https://yourserver.yourdomain.edu/android/list");
    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
    conn.setRequestProperty("X-Auth-Token", ApiConfig.getApiToken());
    // Should return your file list (empty initially)

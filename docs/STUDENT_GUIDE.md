@@ -19,7 +19,7 @@ This guide will help you use the University's file upload/download API in your A
 
 ## API Endpoints
 
-**Base URL:** `https://spiderweb.richmond.edu/android`
+**Base URL:** `https://yourserver.yourdomain.edu/android`
 
 ### 1. Upload a File (HTTP POST)
 
@@ -36,7 +36,7 @@ Content-Type: multipart/form-data
 **Example (Java):**
 ```java
 public class FileUploader {
-    private static final String BASE_URL = "https://spiderweb.richmond.edu/android";
+    private static final String BASE_URL = "https://yourserver.yourdomain.edu/android";
     private static final String AUTH_TOKEN = "YOUR_TOKEN_HERE";
     
     public static String uploadFile(File file) throws IOException {
@@ -120,7 +120,7 @@ X-Auth-Token: YOUR_TOKEN_HERE
 **Example (Java):**
 ```java
 public class FileDownloader {
-    private static final String BASE_URL = "https://spiderweb.richmond.edu/android";
+    private static final String BASE_URL = "https://yourserver.yourdomain.edu/android";
     private static final String AUTH_TOKEN = "YOUR_TOKEN_HERE";
     
     public static void downloadFile(String filename, File outputFile) throws IOException {
@@ -347,7 +347,7 @@ try {
 
 ```java
 public class FileActivity extends AppCompatActivity {
-    private static final String BASE_URL = "https://spiderweb.richmond.edu/android";
+    private static final String BASE_URL = "https://yourserver.yourdomain.edu/android";
     private static final String AUTH_TOKEN = BuildConfig.API_TOKEN; // From gradle
     
     private Button uploadButton;

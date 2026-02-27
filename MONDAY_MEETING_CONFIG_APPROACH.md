@@ -7,7 +7,7 @@
 Even though we have .gitignore protecting tokens/uploads/logs, IS is probably concerned about **operational security** information being public:
 
 1. Server paths: `/scratch/android_course/`
-2. Internal hostnames: `spiderweb.richmond.edu`, `still.richmond.edu`
+2. Internal hostnames: `yourserver.yourdomain.edu`, `yourserver.yourdomain.edu`
 3. Port numbers: `5000`
 4. Service users: `installer`
 5. Directory structures

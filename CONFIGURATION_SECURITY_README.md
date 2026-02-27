@@ -55,7 +55,7 @@ The application reads from `config.toml` at runtime, which contains the site-spe
 
 ### Infrastructure Details (Not in GitHub)
 - Internal server paths: `/scratch/android_course/`
-- Internal hostnames: `spiderweb.richmond.edu`, `still.richmond.edu`
+- Internal hostnames: `yourserver.yourdomain.edu`, `yourserver.yourdomain.edu`
 - Port numbers: `5000`
 - Service usernames: `installer`
 - Directory structures

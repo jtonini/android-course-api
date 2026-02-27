@@ -163,5 +163,5 @@ Continued use of the API after policy updates constitutes acceptance of the new 
 
 **Last Updated:** February 2026  
 **Course:** Android Programming - Spring 2026  
-**System:** spiderweb.richmond.edu  
+**System:** yourserver.yourdomain.edu  
 **Maintained by:** Academic Research Computing, Office of the Provost

@@ -66,7 +66,7 @@ git pull
 ```
 
 **Wizard will prompt for:**
-- Public URL: `https://spiderweb.richmond.edu/android`
+- Public URL: `https://yourserver.yourdomain.edu/android`
 - Flask host: `127.0.0.1`
 - Flask port: `5000`
 - Upload dir: `/scratch/android_course/uploads`
@@ -96,7 +96,7 @@ git status  # config.toml should NOT appear
 sudo systemctl restart android-api
 
 # Verify
-curl https://spiderweb.richmond.edu/android/health
+curl https://yourserver.yourdomain.edu/android/health
 ```
 
 ## Manual config.toml Creation
@@ -113,7 +113,7 @@ Edit the values to match your deployment:
 
 ```toml
 [server]
-base_url = "https://spiderweb.richmond.edu/android"
+base_url = "https://yourserver.yourdomain.edu/android"
 host = "127.0.0.1"
 port = 5000
 workers = 2
@@ -175,7 +175,7 @@ After migration:
 - [ ] App starts without errors: `python app.py`
 - [ ] Health endpoint works: `curl http://localhost:5000/android/health`
 - [ ] Service restarts successfully: `sudo systemctl restart android-api`
-- [ ] Public endpoint works: `curl https://spiderweb.richmond.edu/android/health`
+- [ ] Public endpoint works: `curl https://yourserver.yourdomain.edu/android/health`
 - [ ] Uploads still work (test with token)
 - [ ] Logs are written to correct location
 

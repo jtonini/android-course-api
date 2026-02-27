@@ -11,7 +11,7 @@
  */
 
 // Configuration
-define('API_BASE_URL', 'https://still.richmond.edu/android');
+define('API_BASE_URL', 'https://yourserver.yourdomain.edu/android');
 define('STUDENT_TOKEN', 'your_token_here'); // Replace with actual student token
 
 /**
